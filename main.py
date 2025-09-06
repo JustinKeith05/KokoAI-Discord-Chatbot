@@ -33,6 +33,6 @@ if __name__ == "__main__":
         if user_input.lower() in ["quit", "exit"]:
             break
         ai_response = generate_ai_response(user_input)
-        print("ChatGPT: " + ai_response)
+        print("KokoAI: " + ai_response)
 
     
