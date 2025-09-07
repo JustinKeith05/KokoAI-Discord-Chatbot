@@ -4,6 +4,7 @@ from discord.ext import commands
 import logging
 from dotenv import load_dotenv
 import os
+from collections import defaultdict
 
 # Load environment variables
 load_dotenv()
@@ -22,18 +23,38 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# Store message history (user_id : [messages] )
+user_conversations = defaultdict(list)
 
 # Function to generate response using OpenAI GPT 3.5 Turbo (Doesn't need aysnc / await )
-def generate_ai_response(user_message):
+def generate_ai_response(user_id, user_message):
+
+    user_conversations[user_id].append({
+        "role": "user",
+        "content": user_message,
+    })
+
+    messages = [{
+        "role": "system",
+        "content": PERSONALITY_PROMPT
+    }] + user_conversations[user_id]
+
+    if len(user_conversations[user_id]) > 20:
+        user_conversations[user_id] = user_conversations[user_id][-20:]
+
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": PERSONALITY_PROMPT},
-            {"role": "user", "content": user_message}
-        ],
+        messages=messages,
         # max_tokens=150,
     )
-    return response.choices[0].message.content.strip()
+    
+    assistant_reply = response.choices[0].message.content.strip()
+    user_conversations[user_id].append({
+        "role": "assistant",
+        "content": assistant_reply
+    })
+
+    return assistant_reply
 
 
 # Event: When bot is ready
@@ -51,7 +72,7 @@ async def on_message(message):
         user_message = message.content.replace(f"<@{bot.user.id}>", "").strip()
         async with message.channel.typing():
             try:
-                response = generate_ai_response(user_message)
+                response = generate_ai_response(message.author.id, user_message)
                 await message.channel.send(response)
             except Exception as e:
                 await message.channel.send("Something went wrong.")
