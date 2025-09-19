@@ -5,8 +5,8 @@ import logging
 from dotenv import load_dotenv
 import os
 from collections import defaultdict
-from gtts import gTTS
 from discord import FFmpegPCMAudio
+import tempfile
 
 # Load environment variables
 load_dotenv()
@@ -64,19 +64,38 @@ def generate_ai_response(user_id, user_message, reply_context):
 # Function to convert text to speach and play in voice channel
 async def speak_text(ctx, text: str):
     # Check if bot is connected to a voice channel
-    if ctx.guild.voice_client and ctx.guild.voice_client.is_connected():
-        try:
-            tts = gTTS(text=text, lang='ja', slow=False)
-            tts.save("response.mp3")
+    if not ctx.guild.voice_client or not ctx.guild.voice_client.is_connected():
+        return await ctx.send("I am not connected to a voice channel. Use !join to invite me.")
 
-            if ctx.guild.voice_client.is_playing():
-                ctx.guild.voice_client.stop()
+    try:
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice="nova",
+            input=text,
+        )
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_audio_file:
+            temp_audio_file.write(response.read())
+            # temp_audio_file.flush()
+            
+        if (ctx.guild.voice_client.is_playing()):
+            ctx.guild.voice_client.stop()
 
-            audio_source = FFmpegPCMAudio("response.mp3")
-            ctx.guild.voice_client.play(audio_source)
-        except Exception as e:
-            print("Error generating TTS:", e)
-            return
+        def cleanup_temp_file():
+            try: 
+                os.remove(temp_audio_file.name)
+                print(f"Deleted temporary file: {temp_audio_file.name}")
+            except Exception as e:
+                print(f"Error deleting temporary file: {e}")
+
+        audio_source = FFmpegPCMAudio(temp_audio_file.name)
+        ctx.guild.voice_client.play(audio_source, after=lambda e: cleanup_temp_file())
+
+    except Exception as e:
+        print("Error in TTS or playing audio:", e)
+        await ctx.send("Sorry, I couldn't play the audio.")     
+
+    finally:
+        pass
 
 
 # Event: When bot is ready
@@ -97,7 +116,7 @@ async def on_message(message):
             replied_to = message.reference.resolved
         elif message.reference:
             try:
-                replied_to = await message.channe.fetch_message(message.reference.message_id)
+                replied_to = await message.channel.fetch_message(message.reference.message_id)
             except Exception as e:
                 print("Error fetching replied message:", e)
 
@@ -117,10 +136,17 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+# Event: Bot Error Handling
+@bot.event
+async def on_error(event, *args, **kwargs):
+    print(f"Error in event {event}: {args} {kwargs}")
+
 # Command: Bot Join Voice Channel
 @bot.command()
 async def join(ctx):
     print("Join command invoked")
+    if ctx.voice_client:
+        return await ctx.send("I am already connected to a voice channel!")
     if ctx.author.voice:
         channel = ctx.author.voice.channel
         await channel.connect()
@@ -131,6 +157,8 @@ async def join(ctx):
 # Command: Bot Leave Voice Channel
 @bot.command()
 async def leave(ctx):
+    if not ctx.voice_client:
+        return await ctx.send("I am not connected to a voice channel!")
     if ctx.voice_client:
         await ctx.guild.voice_client.disconnect()
         await ctx.send("Disconnected from the voice channel.")
