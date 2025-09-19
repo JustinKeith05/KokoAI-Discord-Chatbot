@@ -5,6 +5,8 @@ import logging
 from dotenv import load_dotenv
 import os
 from collections import defaultdict
+from gtts import gTTS
+from discord import FFmpegPCMAudio
 
 # Load environment variables
 load_dotenv()
@@ -46,7 +48,7 @@ def generate_ai_response(user_id, user_message, reply_context):
         user_conversations[user_id] = user_conversations[user_id][-20:]
 
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4.1",
         messages=messages,
         # max_tokens=150,
     )
@@ -58,6 +60,23 @@ def generate_ai_response(user_id, user_message, reply_context):
     })
 
     return assistant_reply
+
+# Function to convert text to speach and play in voice channel
+async def speak_text(ctx, text: str):
+    # Check if bot is connected to a voice channel
+    if ctx.guild.voice_client and ctx.guild.voice_client.is_connected():
+        try:
+            tts = gTTS(text=text, lang='ja', slow=False)
+            tts.save("response.mp3")
+
+            if ctx.guild.voice_client.is_playing():
+                ctx.guild.voice_client.stop()
+
+            audio_source = FFmpegPCMAudio("response.mp3")
+            ctx.guild.voice_client.play(audio_source)
+        except Exception as e:
+            print("Error generating TTS:", e)
+            return
 
 
 # Event: When bot is ready
@@ -90,6 +109,8 @@ async def on_message(message):
                 reply_context = replied_to.content if replied_to else None
                 response = generate_ai_response(message.author.id, user_message, reply_context)
                 await message.channel.send(response)
+
+                await speak_text(message, response)
             except Exception as e:
                 await message.channel.send("Something went wrong.")
                 print("Error", e)
