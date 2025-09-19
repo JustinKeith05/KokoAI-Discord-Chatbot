@@ -11,6 +11,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PERSONALITY_PROMPT = os.getenv('PERSONALITY_PROMPT')
+OWNER_ID =int(os.getenv('OWNER_ID'))
 
 # Discord intents
 intents = discord.Intents.default()
@@ -27,12 +28,14 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 user_conversations = defaultdict(list)
 
 # Function to generate response using OpenAI GPT 3.5 Turbo (Doesn't need aysnc / await )
-def generate_ai_response(user_id, user_message):
+def generate_ai_response(user_id, user_message, reply_context):
 
     user_conversations[user_id].append({
         "role": "user",
-        "content": user_message,
+        "content": user_message + reply_context if reply_context else user_message,
     })
+
+    print(reply_context)
 
     messages = [{
         "role": "system",
@@ -69,14 +72,49 @@ async def on_message(message):
         return
     
     if not isinstance(message.channel, discord.DMChannel) and bot.user.mentioned_in(message):
+        # Get replied-to message if exists
+        replied_to = None
+        if message.reference and message.reference.resolved:
+            replied_to = message.reference.resolved
+        elif message.reference:
+            try:
+                replied_to = await message.channe.fetch_message(message.reference.message_id)
+            except Exception as e:
+                print("Error fetching replied message:", e)
+
+
         user_message = message.content.replace(f"<@{bot.user.id}>", "").strip()
+        print(user_message)
         async with message.channel.typing():
             try:
-                response = generate_ai_response(message.author.id, user_message)
+                reply_context = replied_to.content if replied_to else None
+                response = generate_ai_response(message.author.id, user_message, reply_context)
                 await message.channel.send(response)
             except Exception as e:
                 await message.channel.send("Something went wrong.")
                 print("Error", e)
+
+    await bot.process_commands(message)
+
+# Command: Bot Join Voice Channel
+@bot.command()
+async def join(ctx):
+    print("Join command invoked")
+    if ctx.author.voice:
+        channel = ctx.author.voice.channel
+        await channel.connect()
+        await ctx.send(f"Joined {channel}")
+    else:
+        await ctx.send("You are not connected to a voice channel.")
+
+# Command: Bot Leave Voice Channel
+@bot.command()
+async def leave(ctx):
+    if ctx.voice_client:
+        await ctx.guild.voice_client.disconnect()
+        await ctx.send("Disconnected from the voice channel.")
+    else:
+        await ctx.send("I am not connected to any voice channel.")
 
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
