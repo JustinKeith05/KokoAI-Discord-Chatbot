@@ -7,6 +7,7 @@ import os
 from collections import defaultdict
 import tempfile
 import asyncio
+import io
 
 # Load environment variables
 load_dotenv()
@@ -67,67 +68,48 @@ def generate_ai_response(user_id, user_message, reply_context):
 # Function to convert text to speach and play in voice channel
 async def speak_text(message, text: str):
 
-    # if not message.guild.voice_client or not message.guild.voice_client.is_connected():
-    #     return await message.channel.send("I am not connected to a voice channel. Use !join to invite me.")
-
-    # try:
-    #     response = client.audio.speech.create(
-    #         model="tts-1",
-    #         voice="nova",
-    #         input=text,
-    #     )
-
-    #     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_audio_file:
-    #         temp_audio_file.write(response.read())
-
-    #     if message.guild.voice_client.is_playing():
-    #         message.guild.voice_client.stop()
-
-    #     def cleanup_temp_file():
-    #         try:
-    #             os.remove(temp_audio_file.name)
-    #             print(f"Deleted temporary file: {temp_audio_file.name}")
-    #         except Exception as e:
-    #             print(f"Error deleting temporary file: {e}")
-
-    #     audio_source = discord.FFmpegPCMAudio(temp_audio_file.name)
-
-    #     message.guild.voice_client.play(
-    #         audio_source,
-    #         after=lambda e: cleanup_temp_file()
-    #     )
-
-    # except Exception as e:
-    #     print("Error in TTS or playing audio:", e)
-    #     await message.channel.send("Sorry, I couldn't play the audio.") 
-
-    # finally:
-    #     pass
-
     vc = message.guild.voice_client
 
     if not vc or not vc.is_connected():
-        return await message.channel.send("I am not connected to a voice channel. Use !join to invite me.")
-    
-    response = client.audio.speech.create(model="tts-1", voice="nova", input=text)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
-        f.write(response.read())
-        file_path = f.name
+        return await message.channel.send(
+            "I am not connected to a voice channel. Use !join."
+        )
 
-    await audio_queue[message.guild.id].put(file_path)
+    try:
 
-    if not vc.is_playing():
-        await play_next(message.guild)
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice="nova",
+            input=text,
+        )
+
+        audio_bytes = response.read()
+        audio_stream = io.BytesIO(audio_bytes)
+
+        await audio_queue[message.guild.id].put(audio_stream)
+
+        if not vc.is_playing():
+            await play_next(message.guild)
+
+    except Exception as e:
+        print("TTS streaming error:", e)
+        await message.channel.send("Audio playback failed.")
 
 
 async def play_next(guild):
+
     vc = guild.voice_client
     queue = audio_queue[guild.id]
 
-    if (queue.empty()):
+    if queue.empty():
         return
-    
-    file_path = await queue.get()
+
+    stream = await queue.get()
+
+    source = discord.FFmpegPCMAudio(
+        stream,
+        pipe=True
+    )
 
     def after_playing(error):
         asyncio.run_coroutine_threadsafe(
@@ -135,7 +117,7 @@ async def play_next(guild):
             bot.loop
         )
 
-    vc.play(discord.FFmpegPCMAudio(file_path), after=after_playing)
+    vc.play(source, after=after_playing)
 
 
 # Event: When bot is ready
