@@ -1,7 +1,7 @@
 # Feature Logs
 
 ## Speech Feature
-### Problems
+### Bugs
 1. Wrong Object (`Message` vs `Context`)
     ```
     'Message' object has no attribute 'send'
@@ -30,3 +30,17 @@
     Runtime Error: davey library needed in order to use voice
     ```
     - Used to use `PyNaCl` but newer `discord.py` version require `davey`
+
+## Stream TTS
+Instead of 
+```
+OpenAI -> save mp3 -> play
+```
+We could do
+```
+OpenAI -> strean audio -> Discord
+```
+**Benefits**:
+- Faster
+- No disk usage (create + delete)
+- Smoother playback
