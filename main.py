@@ -5,7 +5,6 @@ import logging
 from dotenv import load_dotenv
 import os
 from collections import defaultdict
-from discord import FFmpegPCMAudio
 import tempfile
 
 # Load environment variables
@@ -62,10 +61,10 @@ def generate_ai_response(user_id, user_message, reply_context):
     return assistant_reply
 
 # Function to convert text to speach and play in voice channel
-async def speak_text(ctx, text: str):
-    # Check if bot is connected to a voice channel
-    if not ctx.guild.voice_client or not ctx.guild.voice_client.is_connected():
-        return await ctx.send("I am not connected to a voice channel. Use !join to invite me.")
+async def speak_text(message, text: str):
+
+    if not message.guild.voice_client or not message.guild.voice_client.is_connected():
+        return await message.channel.send("I am not connected to a voice channel. Use !join to invite me.")
 
     try:
         response = client.audio.speech.create(
@@ -73,26 +72,30 @@ async def speak_text(ctx, text: str):
             voice="nova",
             input=text,
         )
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_audio_file:
             temp_audio_file.write(response.read())
-            # temp_audio_file.flush()
-            
-        if (ctx.guild.voice_client.is_playing()):
-            ctx.guild.voice_client.stop()
+
+        if message.guild.voice_client.is_playing():
+            message.guild.voice_client.stop()
 
         def cleanup_temp_file():
-            try: 
+            try:
                 os.remove(temp_audio_file.name)
                 print(f"Deleted temporary file: {temp_audio_file.name}")
             except Exception as e:
                 print(f"Error deleting temporary file: {e}")
 
-        audio_source = FFmpegPCMAudio(temp_audio_file.name)
-        ctx.guild.voice_client.play(audio_source, after=lambda e: cleanup_temp_file())
+        audio_source = discord.FFmpegPCMAudio(temp_audio_file.name)
+
+        message.guild.voice_client.play(
+            audio_source,
+            after=lambda e: cleanup_temp_file()
+        )
 
     except Exception as e:
         print("Error in TTS or playing audio:", e)
-        await ctx.send("Sorry, I couldn't play the audio.")     
+        await message.channel.send("Sorry, I couldn't play the audio.") 
 
     finally:
         pass
@@ -149,7 +152,7 @@ async def join(ctx):
         return await ctx.send("I am already connected to a voice channel!")
     if ctx.author.voice:
         channel = ctx.author.voice.channel
-        await channel.connect()
+        await channel.connect(reconnect=True)
         await ctx.send(f"Joined {channel}")
     else:
         await ctx.send("You are not connected to a voice channel.")
