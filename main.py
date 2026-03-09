@@ -13,7 +13,7 @@ import io
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-PERSONALITY_PROMPT = os.getenv('PERSONALITY_PROMPT')
+PERSONALITY_PROMPT = os.getenv('PERSONALITY_PROMPT1')
 OWNER_ID =int(os.getenv('OWNER_ID'))
 
 # Discord intents
@@ -70,10 +70,10 @@ async def speak_text(message, text: str):
 
     vc = message.guild.voice_client
 
-    if not vc or not vc.is_connected():
-        return await message.channel.send(
-            "I am not connected to a voice channel. Use !join."
-        )
+    # if not vc or not vc.is_connected():
+    #     return await message.channel.send(
+    #         "I am not connected to a voice channel. Use !join."
+    #     )
 
     try:
 
@@ -128,6 +128,7 @@ async def on_ready():
 # Event: Respond to messages
 @bot.event
 async def on_message(message):
+    vc = message.guild.voice_client if message.guild else None
     if message.author == bot.user:
         return
     
@@ -151,7 +152,8 @@ async def on_message(message):
                 response = generate_ai_response(message.author.id, user_message, reply_context)
                 await message.channel.send(response)
 
-                await speak_text(message, response)
+                if vc and vc.is_connected():
+                    await speak_text(message, response)
             except Exception as e:
                 await message.channel.send("Something went wrong.")
                 print("Error", e)
