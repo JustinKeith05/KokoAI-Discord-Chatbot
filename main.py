@@ -13,7 +13,8 @@ import io
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-PERSONALITY_PROMPT = os.getenv('PERSONALITY_PROMPT1')
+PERSONALITY_PROMPT1 = os.getenv('PERSONALITY_PROMPT1')
+PERSONALITY_PROMPT2 = os.getenv('PERSONALITY_PROMPT')
 OWNER_ID =int(os.getenv('OWNER_ID'))
 
 # Discord intents
@@ -45,7 +46,7 @@ def generate_ai_response(user_id, user_message, reply_context):
 
     messages = [{
         "role": "system",
-        "content": PERSONALITY_PROMPT
+        "content": PERSONALITY_PROMPT1 if user_id == OWNER_ID else PERSONALITY_PROMPT2
     }] + user_conversations[user_id]
 
     if len(user_conversations[user_id]) > 20:
@@ -145,10 +146,20 @@ async def on_message(message):
 
 
         user_message = message.content.replace(f"<@{bot.user.id}>", "").strip()
+        
+        for user in message.mentions:
+            user_message = user_message.replace(f"<@{user.id}>", f"[User: {user.display_name}]")
+            user_message = user_message.replace(f"<@!{user.id}>", f"[User: {user.display_name}]")
+
         print(user_message)
         async with message.channel.typing():
             try:
                 reply_context = replied_to.content if replied_to else None
+                if reply_context and replied_to.mentions:
+                    for user in replied_to.mentions:
+                        reply_context = reply_context.replace(f"<@{user.id}>", f"[User: {user.display_name}]")
+                        reply_context = reply_context.replace(f"<@!{user.id}>", f"[User: {user.display_name}]")
+
                 response = generate_ai_response(message.author.id, user_message, reply_context)
                 await message.channel.send(response)
 
