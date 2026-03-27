@@ -8,6 +8,7 @@ from collections import defaultdict
 import tempfile
 import asyncio
 import io
+import base64
 
 # Load environment variables
 load_dotenv()
@@ -35,7 +36,7 @@ user_conversations = defaultdict(list)
 audio_queue = defaultdict(asyncio.Queue)
 
 # Function to generate response using OpenAI GPT 3.5 Turbo (Doesn't need aysnc / await )
-def generate_ai_response(user_id, user_message, reply_context):
+async def generate_ai_response(user_id, user_message, reply_context):
 
     user_conversations[user_id].append({
         "role": "user",
@@ -65,6 +66,18 @@ def generate_ai_response(user_id, user_message, reply_context):
     })
 
     return assistant_reply
+
+async def generate_image(prompt):
+    result = client.images.generate(
+        model="gpt-image-1-mini",
+        prompt=prompt,
+        size="1024x1024"
+    )
+
+    image_base64 = result.data[0].b64_json
+    image_bytes = base64.b64decode(image_base64)
+
+    return image_bytes
 
 # Function to convert text to speach and play in voice channel
 async def speak_text(message, text: str):
@@ -144,12 +157,11 @@ async def on_message(message):
             except Exception as e:
                 print("Error fetching replied message:", e)
 
-
         user_message = message.content.replace(f"<@{bot.user.id}>", "").strip()
-        
+
         for user in message.mentions:
-            user_message = user_message.replace(f"<@{user.id}>", f"[User: {user.display_name}]")
-            user_message = user_message.replace(f"<@!{user.id}>", f"[User: {user.display_name}]")
+            user_message = user_message.replace(f"<@{user.id}>", f"@{user.display_name}")
+            user_message = user_message.replace(f"<@!{user.id}>", f"@{user.display_name}")
 
         print(user_message)
         async with message.channel.typing():
@@ -157,10 +169,10 @@ async def on_message(message):
                 reply_context = replied_to.content if replied_to else None
                 if reply_context and replied_to.mentions:
                     for user in replied_to.mentions:
-                        reply_context = reply_context.replace(f"<@{user.id}>", f"[User: {user.display_name}]")
-                        reply_context = reply_context.replace(f"<@!{user.id}>", f"[User: {user.display_name}]")
+                        reply_context = reply_context.replace(f"<@{user.id}>", f"@{user.display_name}")
+                        reply_context = reply_context.replace(f"<@!{user.id}>", f"@{user.display_name}")
 
-                response = generate_ai_response(message.author.id, user_message, reply_context)
+                response = await generate_ai_response(message.author.id, user_message, reply_context)
                 await message.channel.send(response)
 
                 if vc and vc.is_connected():
@@ -169,6 +181,7 @@ async def on_message(message):
                 await message.channel.send("Something went wrong.")
                 print("Error", e)
 
+    # This ensures that bot commands will be processed properly
     await bot.process_commands(message)
 
 # Event: Bot Error Handling
@@ -199,6 +212,17 @@ async def leave(ctx):
         await ctx.send("Disconnected from the voice channel.")
     else:
         await ctx.send("I am not connected to any voice channel.")
+
+@bot.command()
+async def draw(ctx, *, prompt):
+    try:
+        await ctx.send("Drawing image...")
+        image_bytes = await generate_image(prompt)
+        image_file = discord.File(io.BytesIO(image_bytes), filename="generated_image.png")
+        await ctx.send(file=image_file)
+    except Exception as e:
+        print("Image generation error:", e)
+        await ctx.send("Failed to generate image.")
 
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
