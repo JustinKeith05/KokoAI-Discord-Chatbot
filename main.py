@@ -4,35 +4,226 @@ from discord.ext import commands
 import logging
 from dotenv import load_dotenv
 import os
+from collections import defaultdict
+import tempfile
+import asyncio
+import io
+import base64
 
+# Load environment variables
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-PERSONALITY_PROMPT = os.getenv('PERSONALITY_PROMPT')
+PERSONALITY_PROMPT1 = os.getenv('PERSONALITY_PROMPT1')
+PERSONALITY_PROMPT2 = os.getenv('PERSONALITY_PROMPT')
+OWNER_ID =int(os.getenv('OWNER_ID'))
 
+# Discord intents
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
+# Discord bot setup
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def generate_ai_response(user_message):
+# Store message history (user_id : [messages] )
+user_conversations = defaultdict(list)
+
+# Audio Queue
+audio_queue = defaultdict(asyncio.Queue)
+
+# Function to generate response using OpenAI GPT 3.5 Turbo (Doesn't need aysnc / await )
+async def generate_ai_response(user_id, user_message, reply_context):
+
+    user_conversations[user_id].append({
+        "role": "user",
+        "content": user_message + reply_context if reply_context else user_message,
+    })
+
+    print(reply_context)
+
+    messages = [{
+        "role": "system",
+        "content": PERSONALITY_PROMPT1 if user_id == OWNER_ID else PERSONALITY_PROMPT2
+    }] + user_conversations[user_id]
+
+    if len(user_conversations[user_id]) > 20:
+        user_conversations[user_id] = user_conversations[user_id][-20:]
+
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": PERSONALITY_PROMPT},
-            {"role": "user", "content": user_message}
-        ],
+        model="gpt-4.1",
+        messages=messages,
         # max_tokens=150,
     )
-    return response.choices[0].message.content.strip()
+    
+    assistant_reply = response.choices[0].message.content.strip()
+    user_conversations[user_id].append({
+        "role": "assistant",
+        "content": assistant_reply
+    })
+
+    return assistant_reply
+
+async def generate_image(prompt):
+    result = client.images.generate(
+        model="gpt-image-1-mini",
+        prompt=prompt,
+        size="1024x1024"
+    )
+
+    image_base64 = result.data[0].b64_json
+    image_bytes = base64.b64decode(image_base64)
+
+    return image_bytes
+
+# Function to convert text to speach and play in voice channel
+async def speak_text(message, text: str):
+
+    vc = message.guild.voice_client
+
+    # if not vc or not vc.is_connected():
+    #     return await message.channel.send(
+    #         "I am not connected to a voice channel. Use !join."
+    #     )
+
+    try:
+
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice="nova",
+            input=text,
+        )
+
+        audio_bytes = response.read()
+        audio_stream = io.BytesIO(audio_bytes)
+
+        await audio_queue[message.guild.id].put(audio_stream)
+
+        if not vc.is_playing():
+            await play_next(message.guild)
+
+    except Exception as e:
+        print("TTS streaming error:", e)
+        await message.channel.send("Audio playback failed.")
+
+
+async def play_next(guild):
+
+    vc = guild.voice_client
+    queue = audio_queue[guild.id]
+
+    if queue.empty():
+        return
+
+    stream = await queue.get()
+
+    source = discord.FFmpegPCMAudio(
+        stream,
+        pipe=True
+    )
+
+    def after_playing(error):
+        asyncio.run_coroutine_threadsafe(
+            play_next(guild),
+            bot.loop
+        )
+
+    vc.play(source, after=after_playing)
+
+
+# Event: When bot is ready
+@bot.event
+async def on_ready():
+    print(f"{bot.user.name} is now running!")
+
+# Event: Respond to messages
+@bot.event
+async def on_message(message):
+    vc = message.guild.voice_client if message.guild else None
+    if message.author == bot.user:
+        return
+    
+    if not isinstance(message.channel, discord.DMChannel) and bot.user.mentioned_in(message):
+        # Get replied-to message if exists
+        replied_to = None
+        if message.reference and message.reference.resolved:
+            replied_to = message.reference.resolved
+        elif message.reference:
+            try:
+                replied_to = await message.channel.fetch_message(message.reference.message_id)
+            except Exception as e:
+                print("Error fetching replied message:", e)
+
+        user_message = message.content.replace(f"<@{bot.user.id}>", "").strip()
+
+        for user in message.mentions:
+            user_message = user_message.replace(f"<@{user.id}>", f"@{user.display_name}")
+            user_message = user_message.replace(f"<@!{user.id}>", f"@{user.display_name}")
+
+        print(user_message)
+        async with message.channel.typing():
+            try:
+                reply_context = replied_to.content if replied_to else None
+                if reply_context and replied_to.mentions:
+                    for user in replied_to.mentions:
+                        reply_context = reply_context.replace(f"<@{user.id}>", f"@{user.display_name}")
+                        reply_context = reply_context.replace(f"<@!{user.id}>", f"@{user.display_name}")
+
+                response = await generate_ai_response(message.author.id, user_message, reply_context)
+                await message.channel.send(response)
+
+                if vc and vc.is_connected():
+                    await speak_text(message, response)
+            except Exception as e:
+                await message.channel.send("Something went wrong.")
+                print("Error", e)
+
+    # This ensures that bot commands will be processed properly
+    await bot.process_commands(message)
+
+# Event: Bot Error Handling
+@bot.event
+async def on_error(event, *args, **kwargs):
+    print(f"Error in event {event}: {args} {kwargs}")
+
+# Command: Bot Join Voice Channel
+@bot.command()
+async def join(ctx):
+    print("Join command invoked")
+    if ctx.voice_client:
+        return await ctx.send("I am already connected to a voice channel!")
+    if ctx.author.voice:
+        channel = ctx.author.voice.channel
+        await channel.connect(reconnect=True)
+        await ctx.send(f"Joined {channel}")
+    else:
+        await ctx.send("You are not connected to a voice channel.")
+
+# Command: Bot Leave Voice Channel
+@bot.command()
+async def leave(ctx):
+    if not ctx.voice_client:
+        return await ctx.send("I am not connected to a voice channel!")
+    if ctx.voice_client:
+        await ctx.guild.voice_client.disconnect()
+        await ctx.send("Disconnected from the voice channel.")
+    else:
+        await ctx.send("I am not connected to any voice channel.")
+
+@bot.command()
+async def draw(ctx, *, prompt):
+    try:
+        await ctx.send("Drawing image...")
+        image_bytes = await generate_image(prompt)
+        image_file = discord.File(io.BytesIO(image_bytes), filename="generated_image.png")
+        await ctx.send(file=image_file)
+    except Exception as e:
+        print("Image generation error:", e)
+        await ctx.send("Failed to generate image.")
 
 if __name__ == "__main__":
-    while True:
-        user_input = input ("You: ")
-        if user_input.lower() in ["quit", "exit"]:
-            break
-        ai_response = generate_ai_response(user_input)
-        print("KokoAI: " + ai_response)
-
+    bot.run(DISCORD_TOKEN)
     

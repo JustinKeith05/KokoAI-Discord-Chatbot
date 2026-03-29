@@ -64,3 +64,19 @@ A starter discord chatbot that uses OpenAI API's model to respond to user's inpu
     ```
         deactivate
     ```
+
+<br>
+<br>
+
+# Versions
+## Version 1
+- [x] Simple input gathering and API request calls to OpenAI API.  
+- [x] Done through command line.
+
+## Version 2
+- [x] Discord bot integration - Gets input from users who mentions or replies to the bot.
+- [x] Local hosting
+
+## Version 2.1
+- [ ] Able to store message contexts 
+- [ ] Able to be hosted on a remote server to be online 
